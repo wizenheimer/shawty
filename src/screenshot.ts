@@ -23,6 +23,9 @@ declare global {
 	}
 }
 
+const log = console.log;
+const warn = console.warn;
+
 // PageManager is a utility class that handles page specific operations
 // biome-ignore lint/complexity/noStaticOnlyClass: <explanation>
 class PageManager {
@@ -120,10 +123,15 @@ class PageManager {
 				const tab = autoconsent.attachToPage(page, url, rules, 10);
 				// Wait for the tab to be checked and do the opt-in
 				await tab.checked;
-				// Do the opt-in
-				await tab.doOptIn();
+
+				// Check if the tab has a rule and do the opt-in
+				if (tab.rule) {
+					await tab.doOptIn();
+				} else {
+					log("No consent rule found, continuing without consent handling");
+				}
 			} catch (error) {
-				console.warn("CMP handling error:", error);
+				warn("CMP handling error:", error);
 			}
 		});
 
@@ -218,7 +226,7 @@ export class ScreenshotService {
 		}
 
 		try {
-			console.log(`Taking screenshot of ${options.url}...`);
+			log(`Taking screenshot of ${options.url}...`);
 
 			// 2. Setup the page with the specified options
 			const page = await PageManager.setupPage(this.browser, options);
@@ -237,16 +245,16 @@ export class ScreenshotService {
 				options.timeout ?? 30000,
 			);
 
-      // 5. Capture a screenshot of the page
+			// 5. Capture a screenshot of the page
 			const screenshot = await PageManager.captureScreenshot(page, options);
 
-      // 6. If the outputPath is specified, save the screenshot to the outputPath
+			// 6. If the outputPath is specified, save the screenshot to the outputPath
 			if (options.outputPath) {
 				await writeFile(options.outputPath, new Uint8Array(screenshot));
-				console.log(`Screenshot saved to ${options.outputPath}`);
+				log(`Screenshot saved to ${options.outputPath}`);
 			}
 
-      // 7. Return the screenshot buffer
+			// 7. Return the screenshot buffer
 			return screenshot;
 		} catch (error) {
 			console.error(`Screenshot failed for ${options.url}:`, error);
@@ -254,7 +262,7 @@ export class ScreenshotService {
 		}
 	}
 
-  // Cleanup the browser and blocker
+	// Cleanup the browser and blocker
 	async cleanup(): Promise<void> {
 		if (this.browser) {
 			await this.browser.close();

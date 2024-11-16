@@ -6,7 +6,9 @@ const run = async () => {
 	try {
 		const urls = [
 			// "https://bun.sh",
-			"https://www.commonroom.io/product/customer-intelligence-platform/",
+			// "https://www.commonroom.io/product/customer-intelligence-platform/",
+			"https://about.scarf.sh/",
+			"https://about.scarf.sh/scarf-executive-investor-growth-metrics/",
 		];
 		const outputDir = "screenshots";
 
