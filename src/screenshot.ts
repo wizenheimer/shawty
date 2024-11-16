@@ -95,6 +95,165 @@ class PageManager {
 		});
 	}
 
+	// blockChatWidgets is a static method that blocks chat widgets on the page by hiding them
+	private static async blockChatWidgets(page: Page): Promise<void> {
+		// Block chat widget requests
+		const blockPatterns = [
+			"crisp.chat",
+			"intercom.io",
+			"messenger.com",
+			"facebook.com/*/customer_chat",
+			"drift.com",
+			"tawk.to",
+			"user.com",
+			"zoho.com/salesiq",
+			"hubspot.com/messaging",
+			"livechatinc.com",
+			"zopim.com",
+			"freshchat.com",
+			"olark.com",
+			"zendesk.com/embeddable",
+			"gorgias.chat",
+			"smooch.io",
+			"purechat.com",
+		];
+
+		// Set up request interception without interfering with existing handlers
+		await page.setRequestInterception(true);
+		page.on("request", async (request) => {
+			try {
+				const url = request.url().toLowerCase();
+				if (blockPatterns.some((pattern) => url.includes(pattern))) {
+					await request.abort();
+				} else {
+					await request.continue();
+				}
+			} catch (error) {
+				// If request is already handled, ignore the error
+				if (
+					error instanceof Error &&
+					!error.message.includes("Request is already handled")
+				) {
+					warn("Request interception error:", error);
+				}
+				// Ensure the request doesn't hang
+				try {
+					await request.continue();
+				} catch (e) {
+					// Ignore any subsequent errors
+				}
+			}
+		});
+
+		// Add DOM-based blocking
+		try {
+			await page.evaluate(() => {
+				const chatSelectors = [
+					// Updated selectors for better coverage
+					'[class*="chat-widget"]',
+					'[class*="messenger"]',
+					'[id*="chat-widget"]',
+					'[id*="messenger"]',
+					'div[class*="chat"]',
+					'div[id*="chat"]',
+					'iframe[title*="chat" i]',
+					'iframe[title*="messenger" i]',
+					'div[aria-label*="chat" i]',
+
+					// Platform specific selectors
+					"#crisp-chatbox",
+					'[class*="crisp-client"]',
+					'div[class*="crisp"]',
+					"#intercom-container",
+					"#intercom-frame",
+					'[class*="intercom-"]',
+					".fb-customerchat",
+					'iframe[class*="fb_customer_chat"]',
+					"#drift-widget",
+					'[class*="drift-frame"]',
+					"#tawk-tooltip",
+					'iframe[title*="tawk"]',
+					"#usercom-messenger",
+					'[class*="usercom"]',
+					"#zsiq_float",
+					'[class*="zsiq"]',
+					"#hubspot-messages-iframe-container",
+					'[class*="hubspot-messages"]',
+
+					// Common patterns
+					'div[class*="widget-chat"]',
+					'div[class*="chat-button"]',
+					'div[class*="chat-launcher"]',
+					'div[class*="live-chat"]',
+					'div[class*="livechat"]',
+					'[data-testid*="chat"]',
+					'[role="dialog"][aria-label*="chat" i]',
+				];
+
+				// Function to remove chat elements
+				const removeChatElements = () => {
+					for (const selector of chatSelectors) {
+						const elements = document.querySelectorAll(selector);
+						for (const element of Array.from(elements)) {
+							element.remove();
+						}
+					}
+				};
+
+				// Initial removal
+				removeChatElements();
+
+				// Create style to hide chat widgets
+				const style = document.createElement("style");
+				style.textContent = `
+					${chatSelectors.join(", ")} {
+						display: none !important;
+						visibility: hidden !important;
+						opacity: 0 !important;
+						pointer-events: none !important;
+						width: 0 !important;
+						height: 0 !important;
+						position: absolute !important;
+						z-index: -9999 !important;
+					}
+
+					/* High z-index elements */
+					iframe[style*="z-index: 2147483647"],
+					iframe[style*="z-index:2147483647"],
+					div[style*="z-index: 2147483647"][class*="chat"],
+					div[style*="z-index:2147483647"][class*="chat"] {
+						display: none !important;
+					}
+				`;
+				document.head.appendChild(style);
+
+				// Set up mutation observer
+				const observer = new MutationObserver((mutations) => {
+					let shouldRemove = false;
+					for (const mutation of mutations) {
+						if (mutation.addedNodes.length) {
+							shouldRemove = true;
+						}
+					}
+					if (shouldRemove) {
+						removeChatElements();
+					}
+				});
+
+				observer.observe(document.body, {
+					childList: true,
+					subtree: true,
+					attributes: true,
+				});
+
+				// Return cleanup function
+				return () => observer.disconnect();
+			});
+		} catch (error) {
+			warn("Chat widget blocking error:", error);
+		}
+	}
+
 	// setupPage is a static method that creates a new page with the specified options like width, height, and timeout
 	static async setupPage(
 		browser: Browser,
@@ -117,6 +276,9 @@ class PageManager {
 		waitUntil: PuppeteerLifeCycleEvent,
 		timeout: number,
 	): Promise<void> {
+		// Block chat widgets
+		await PageManager.blockChatWidgets(page);
+
 		page.once("load", async () => {
 			try {
 				// Attach the autoconsent CMP to the page and handle the consent dialog
@@ -195,7 +357,8 @@ export class ScreenshotService {
 		try {
 			// block third-party cookies
 			this.blocker = await PuppeteerBlocker.fromLists(fetch, [
-				"https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
+				"https://secure.fanboy.co.nz/fanboy-cookiemonster.txt", // Fanboy's Cookiemonster list for blocking consent brokers
+				// "https://raw.githubusercontent.com/easylist/easylist/master/easylist/easylist_general_block.txt", // Additional blocking rules
 			]);
 
 			// Launch the browser with the specified options
