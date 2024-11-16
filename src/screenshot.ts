@@ -125,6 +125,7 @@ class PageManager {
 	private static async blockChatWidgets(page: Page): Promise<void> {
 		// Block chat widget requests
 		const blockPatterns = [
+			// Common chat services
 			"crisp.chat",
 			"intercom.io",
 			"messenger.com",
@@ -142,52 +143,116 @@ class PageManager {
 			"gorgias.chat",
 			"smooch.io",
 			"purechat.com",
+
+			// HubSpot specific domains
+			"js.hsforms.net",
+			"js.usemessages.com",
+			"js.hs-scripts.com",
+			"js.hscollectedforms.net",
+			"js.hsadspixel.net",
+			"js.hs-analytics.net",
+			"js.hs-banner.com",
+			"*.hubspot.com/conversations-visitor",
+			"meetings.hubspot.com",
+			"api.hubspot.com/conversations",
+			"*.hubspot.net",
 		];
 
-		// Set up request interception without interfering with existing handlers
+		// Set up request interception
 		await page.setRequestInterception(true);
 		page.on("request", async (request) => {
 			try {
 				const url = request.url().toLowerCase();
-				if (blockPatterns.some((pattern) => url.includes(pattern))) {
+				if (
+					blockPatterns.some((pattern) => {
+						const regexPattern = pattern
+							.replace(/\./g, "\\.")
+							.replace(/\*/g, ".*");
+						return new RegExp(regexPattern).test(url);
+					})
+				) {
 					await request.abort();
 				} else {
 					await request.continue();
 				}
 			} catch (error) {
-				// If request is already handled, ignore the error
 				if (
 					error instanceof Error &&
 					!error.message.includes("Request is already handled")
 				) {
-					warn("Request interception error:", error);
+					console.warn("Request interception error:", error);
 				}
-				// Ensure the request doesn't hang
 				try {
 					await request.continue();
 				} catch (e) {
-					// Ignore any subsequent errors
+					// Ignore subsequent errors
 				}
 			}
 		});
 
 		// Add DOM-based blocking
-		try {
-			await page.evaluate(() => {
-				const chatSelectors = [
-					// Hubspot specific selectors
+		await page.evaluate(() => {
+			const chatSelectors = {
+				// HubSpot specific selectors
+				hubspot: [
+					// Iframe containers
 					"#hubspot-messages-iframe-container",
-					'[class*="hubspot-messages"]',
-					"[data-hubspot-mounted]",
+					"iframe[data-test-id='hubspot-messages-iframe']",
+					"iframe[data-test-id='chat-widget-iframe']",
+					"iframe[id^='hubspot-messages-iframe']",
+					".hs-messages-iframe-wrapper",
+					"[data-hubspot-mounted='true']",
+					"[data-hs-messages-widget]",
 					"[data-hs-messaging]",
-					'iframe[src*="hubspot"]',
-					'iframe[id*="hubspot"]',
-					'div[class*="hs-message"]',
+					".hs-messages-widget",
+					".hs-messages",
+					"[data-messaging-widget-loading]",
+					".hs-widget-loading",
+					".hs-default-font-element",
+					".hs-shadow-container",
 					"#hs-eu-cookie-confirmation",
 					"#hs-banner-iframe",
-					"#chat-widget-container",
+					'[class*="hs-messenger"]',
+					'[id*="hs-messenger"]',
+					"#hs-script-container",
+				],
 
-					// Updated selectors for better coverage
+				// General chat widget selectors
+				general: [
+					// Crisp
+					"#crisp-chatbox",
+					'[class*="crisp-client"]',
+					'div[class*="crisp"]',
+
+					// Intercom
+					"#intercom-container",
+					"#intercom-frame",
+					'[class*="intercom-"]',
+
+					// Facebook
+					".fb-customerchat",
+					'iframe[class*="fb_customer_chat"]',
+
+					// Drift
+					"#drift-widget",
+					'[class*="drift-frame"]',
+
+					// Tawk
+					"#tawk-tooltip",
+					'iframe[title*="tawk"]',
+
+					// Others
+					"#usercom-messenger",
+					'[class*="usercom"]',
+					"#zsiq_float",
+					'[class*="zsiq"]',
+					'div[class*="widget-chat"]',
+					'div[class*="chat-button"]',
+					'div[class*="chat-launcher"]',
+					'div[class*="live-chat"]',
+					'div[class*="livechat"]',
+					'[data-testid*="chat"]',
+					'[role="dialog"][aria-label*="chat" i]',
 					'[class*="chat-widget"]',
 					'[class*="messenger"]',
 					'[id*="chat-widget"]',
@@ -197,107 +262,147 @@ class PageManager {
 					'iframe[title*="chat" i]',
 					'iframe[title*="messenger" i]',
 					'div[aria-label*="chat" i]',
+				],
+			};
 
-					// Platform specific selectors
-					"#crisp-chatbox",
-					'[class*="crisp-client"]',
-					'div[class*="crisp"]',
-					"#intercom-container",
-					"#intercom-frame",
-					'[class*="intercom-"]',
-					".fb-customerchat",
-					'iframe[class*="fb_customer_chat"]',
-					"#drift-widget",
-					'[class*="drift-frame"]',
-					"#tawk-tooltip",
-					'iframe[title*="tawk"]',
-					"#usercom-messenger",
-					'[class*="usercom"]',
-					"#zsiq_float",
-					'[class*="zsiq"]',
-					"#hubspot-messages-iframe-container",
-					'[class*="hubspot-messages"]',
+			// Combine all selectors
+			const allSelectors = [...chatSelectors.hubspot, ...chatSelectors.general];
 
-					// Common patterns
-					'div[class*="widget-chat"]',
-					'div[class*="chat-button"]',
-					'div[class*="chat-launcher"]',
-					'div[class*="live-chat"]',
-					'div[class*="livechat"]',
-					'[data-testid*="chat"]',
-					'[role="dialog"][aria-label*="chat" i]',
-				];
-
-				// Function to remove chat elements
-				const removeChatElements = () => {
-					for (const selector of chatSelectors) {
-						const elements = document.querySelectorAll(selector);
-						for (const element of Array.from(elements)) {
-							element.remove();
+			// Function to remove chat elements with retry mechanism
+			const removeChatElements = () => {
+				for (const selector of allSelectors) {
+					const elements = document.querySelectorAll(selector);
+					// biome-ignore lint/complexity/noForEach: <explanation>
+					elements.forEach((element) => {
+						if (element instanceof HTMLElement) {
+							try {
+								// First try to remove
+								element.remove();
+							} catch (e) {
+								// If removal fails, hide with CSS
+								element.style.cssText = `
+                                display: none !important;
+                                visibility: hidden !important;
+                                opacity: 0 !important;
+                                pointer-events: none !important;
+                                width: 0 !important;
+                                height: 0 !important;
+                                position: absolute !important;
+                                z-index: -9999 !important;
+                                clip: rect(1px, 1px, 1px, 1px) !important;
+                                overflow: hidden !important;
+                            `;
+							}
 						}
+					});
+				}
+			};
+
+			// Initial removal
+			removeChatElements();
+
+			// Create and inject blocking styles
+			const style = document.createElement("style");
+			style.textContent = `
+            /* HubSpot specific blocking */
+            ${chatSelectors.hubspot.join(",\n            ")} {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+                width: 0 !important;
+                height: 0 !important;
+                position: absolute !important;
+                z-index: -9999 !important;
+                clip: rect(1px, 1px, 1px, 1px) !important;
+                overflow: hidden !important;
+            }
+
+            /* Block high z-index elements */
+            [style*="z-index:"][style*="999999"][id*="hubspot"],
+            [style*="z-index:"][style*="999999"][class*="hs-"],
+            iframe[style*="z-index:"][style*="999999"][src*="hubspot"],
+            [style*="z-index:"][style*="999999"],
+            [style*="z-index: "][style*="999999"] {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+
+            /* General chat widget blocking */
+            ${chatSelectors.general.join(",\n            ")} {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+
+            /* Prevent fixed position elements */
+            [style*="position: fixed"],
+            [style*="position:fixed"] {
+                position: absolute !important;
+            }
+        `;
+			document.head.appendChild(style);
+
+			// Enhanced mutation observer
+			const observer = new MutationObserver((mutations) => {
+				let shouldRemove = false;
+				for (const mutation of mutations) {
+					// Check for added nodes
+					if (mutation.addedNodes.length) {
+						shouldRemove = true;
+						break;
 					}
-				};
 
-				// Initial removal
-				removeChatElements();
+					// Check for attribute changes on potential chat elements
+					if (
+						mutation.type === "attributes" &&
+						mutation.target instanceof HTMLElement
+					) {
+						const targetElement = mutation.target;
+						const hasHubspotClass =
+							targetElement.className?.includes("hs-") ||
+							targetElement.className?.includes("hubspot");
+						const hasHubspotId =
+							targetElement.id?.includes("hs-") ||
+							targetElement.id?.includes("hubspot");
+						const hasChatClass =
+							targetElement.className?.toLowerCase().includes("chat") ||
+							targetElement.className?.toLowerCase().includes("messenger");
 
-				// Create style to hide chat widgets
-				const style = document.createElement("style");
-				style.textContent = `
-					${chatSelectors.join(", ")} {
-						display: none !important;
-						visibility: hidden !important;
-						opacity: 0 !important;
-						pointer-events: none !important;
-						width: 0 !important;
-						height: 0 !important;
-						position: absolute !important;
-						z-index: -9999 !important;
-					}
-
-					/* Block high z-index elements */
-					iframe[style*="z-index:"][style*="999999"],
-					iframe[style*="z-index: "][style*="999999"],
-					div[style*="z-index:"][style*="999999"],
-					div[style*="z-index: "][style*="999999"],
-					/* Hubspot specific */
-					.hs-default-font-element,
-					.hs-shadow-container,
-					#hubspot-messages-iframe-container,
-					iframe[id^="hubspot-messages-iframe"],
-					.hs-messages-iframe-wrapper {
-						display: none !important;
-						visibility: hidden !important;
-						opacity: 0 !important;
-					}
-				`;
-				document.head.appendChild(style);
-
-				// Set up mutation observer
-				const observer = new MutationObserver((mutations) => {
-					let shouldRemove = false;
-					for (const mutation of mutations) {
-						if (mutation.addedNodes.length) {
+						if (hasHubspotClass || hasHubspotId || hasChatClass) {
 							shouldRemove = true;
+							break;
 						}
 					}
-					if (shouldRemove) {
-						removeChatElements();
-					}
-				});
+				}
 
-				observer.observe(document.body, {
-					childList: true,
-					subtree: true,
-					attributes: true,
-				});
-
-				// Return cleanup function
-				return () => observer.disconnect();
+				if (shouldRemove) {
+					removeChatElements();
+					// Additional check after a short delay
+					setTimeout(removeChatElements, 100);
+				}
 			});
-		} catch (error) {
-			warn("Chat widget blocking error:", error);
-		}
+
+			// Start observing with specific options
+			observer.observe(document.body, {
+				childList: true,
+				subtree: true,
+				attributes: true,
+				attributeFilter: ["style", "class", "id"],
+			});
+
+			// Periodic cleanup for persistent widgets
+			const cleanupInterval = setInterval(removeChatElements, 1000);
+
+			// Return cleanup function
+			return () => {
+				observer.disconnect();
+				clearInterval(cleanupInterval);
+			};
+		});
 	}
 
 	// setupPage is a static method that creates a new page with the specified options like width, height, and timeout
