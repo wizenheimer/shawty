@@ -5,7 +5,7 @@ const run = async () => {
 
 	try {
 		const urls = [
-			"https://bun.sh",
+			// "https://bun.sh",
 			"https://www.commonroom.io/product/customer-intelligence-platform/",
 		];
 		const outputDir = "screenshots";

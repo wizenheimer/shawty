@@ -10,6 +10,9 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@cliqz/adblocker-puppeteer": "^1.34.0",
+    "@duckduckgo/autoconsent": "1.0.8",
+    "cross-fetch": "^4.0.0",
     "puppeteer": "^23.8.0"
   }
 }
