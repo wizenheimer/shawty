@@ -95,6 +95,32 @@ class PageManager {
 		});
 	}
 
+	// Add smooth scrolling method
+	private static async smoothScroll(page: Page): Promise<void> {
+		await page.evaluate(async () => {
+			await new Promise<void>((resolve) => {
+				let totalHeight = 0;
+				const distance = 100; // Scroll by 100px each time
+				const delay = 100; // Wait 100ms between scrolls
+
+				const timer = setInterval(() => {
+					const scrollHeight = document.body.scrollHeight;
+					window.scrollBy(0, distance);
+					totalHeight += distance;
+
+					// If we've scrolled past the document height
+					if (totalHeight >= scrollHeight) {
+						// Scroll back to top
+						window.scrollTo(0, 0);
+						clearInterval(timer);
+						// Wait a bit after scrolling back to top
+						setTimeout(resolve, 500);
+					}
+				}, delay);
+			});
+		});
+	}
+
 	// blockChatWidgets is a static method that blocks chat widgets on the page by hiding them
 	private static async blockChatWidgets(page: Page): Promise<void> {
 		// Block chat widget requests
@@ -149,6 +175,18 @@ class PageManager {
 		try {
 			await page.evaluate(() => {
 				const chatSelectors = [
+					// Hubspot specific selectors
+					"#hubspot-messages-iframe-container",
+					'[class*="hubspot-messages"]',
+					"[data-hubspot-mounted]",
+					"[data-hs-messaging]",
+					'iframe[src*="hubspot"]',
+					'iframe[id*="hubspot"]',
+					'div[class*="hs-message"]',
+					"#hs-eu-cookie-confirmation",
+					"#hs-banner-iframe",
+					"#chat-widget-container",
+
 					// Updated selectors for better coverage
 					'[class*="chat-widget"]',
 					'[class*="messenger"]',
@@ -217,12 +255,20 @@ class PageManager {
 						z-index: -9999 !important;
 					}
 
-					/* High z-index elements */
-					iframe[style*="z-index: 2147483647"],
-					iframe[style*="z-index:2147483647"],
-					div[style*="z-index: 2147483647"][class*="chat"],
-					div[style*="z-index:2147483647"][class*="chat"] {
+					/* Block high z-index elements */
+					iframe[style*="z-index:"][style*="999999"],
+					iframe[style*="z-index: "][style*="999999"],
+					div[style*="z-index:"][style*="999999"],
+					div[style*="z-index: "][style*="999999"],
+					/* Hubspot specific */
+					.hs-default-font-element,
+					.hs-shadow-container,
+					#hubspot-messages-iframe-container,
+					iframe[id^="hubspot-messages-iframe"],
+					.hs-messages-iframe-wrapper {
 						display: none !important;
+						visibility: hidden !important;
+						opacity: 0 !important;
 					}
 				`;
 				document.head.appendChild(style);
@@ -312,6 +358,13 @@ class PageManager {
 		page: Page,
 		options: ScreenshotOptions,
 	): Promise<Buffer> {
+		if (options.fullPage) {
+			// Perform smooth scroll before taking screenshot
+			await PageManager.smoothScroll(page);
+			// Wait for any lazy-loaded content
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+
 		const screenshot = await page.screenshot({
 			fullPage: options.fullPage ?? true,
 			type: options.format ?? "jpeg",
