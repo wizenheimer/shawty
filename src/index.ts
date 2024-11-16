@@ -9,7 +9,10 @@ const run = async () => {
 			// "https://www.commonroom.io/product/customer-intelligence-platform/",
 			// "https://about.scarf.sh/",
 			// "https://about.scarf.sh/scarf-executive-investor-growth-metrics/",
-			"https://www.superjoin.ai/",
+			// "https://www.superjoin.ai/",
+			"https://www.superjoin.ai/pricing",
+			// "https://www.dezerv.in/",
+			// "https://www.dezerv.in/products",
 		];
 		const outputDir = "screenshots";
 
