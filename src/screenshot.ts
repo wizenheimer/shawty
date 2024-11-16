@@ -17,6 +17,18 @@ interface StickyStyle {
 	style: string;
 }
 
+interface ScrollMetrics {
+	viewportHeight: number;
+	documentHeight: number;
+	scrollTop: number;
+}
+
+interface LazyLoadMetrics {
+	imageCount: number;
+	iframeCount: number;
+	pendingNetworkRequests: number;
+}
+
 declare global {
 	interface Window {
 		__originalStickyStyles: StickyStyle[];
@@ -458,16 +470,166 @@ class PageManager {
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	}
 
+	private static async getScrollMetrics(page: Page): Promise<ScrollMetrics> {
+		return page.evaluate(() => ({
+			viewportHeight: window.innerHeight,
+			documentHeight: Math.max(
+				document.documentElement.scrollHeight,
+				document.body.scrollHeight,
+				document.documentElement.offsetHeight,
+				document.body.offsetHeight,
+			),
+			scrollTop: window.scrollY,
+		}));
+	}
+
+	private static async getLazyLoadMetrics(
+		page: Page,
+	): Promise<LazyLoadMetrics> {
+		return page.evaluate(() => ({
+			imageCount: document.images.length,
+			iframeCount: document.getElementsByTagName("iframe").length,
+			pendingNetworkRequests: window.performance
+				.getEntriesByType("resource")
+				.filter((r) => !(r as PerformanceResourceTiming).responseEnd).length,
+		}));
+	}
+
+	private static async waitForLazyLoad(
+		page: Page,
+		timeout = 5000,
+	): Promise<void> {
+		const startTime = Date.now();
+		let previousMetrics: LazyLoadMetrics | null = null;
+
+		while (Date.now() - startTime < timeout) {
+			const currentMetrics = await PageManager.getLazyLoadMetrics(page);
+
+			// If this is our first check, store metrics and continue
+			if (!previousMetrics) {
+				previousMetrics = currentMetrics;
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				continue;
+			}
+
+			// Check if content has stabilized
+			const isStable =
+				currentMetrics.imageCount === previousMetrics.imageCount &&
+				currentMetrics.iframeCount === previousMetrics.iframeCount &&
+				currentMetrics.pendingNetworkRequests === 0;
+
+			if (isStable) {
+				// Wait a little longer to ensure stability
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				const finalCheck = await PageManager.getLazyLoadMetrics(page);
+
+				if (
+					finalCheck.imageCount === currentMetrics.imageCount &&
+					finalCheck.iframeCount === currentMetrics.iframeCount &&
+					finalCheck.pendingNetworkRequests === 0
+				) {
+					return; // Content has stabilized
+				}
+			}
+
+			previousMetrics = currentMetrics;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+
+		console.warn("Lazy load wait timeout reached");
+	}
+
+	private static async intelligentScroll(
+		page: Page,
+		options: {
+			maxTimeout?: number;
+			scrollStep?: number;
+			stabilityTimeout?: number;
+		} = {},
+	): Promise<void> {
+		const {
+			maxTimeout = 30000,
+			scrollStep = 250,
+			stabilityTimeout = 5000,
+		} = options;
+
+		const startTime = Date.now();
+		let lastDocumentHeight = 0;
+		let stabilityCounter = 0;
+		const STABILITY_THRESHOLD = 3;
+
+		while (Date.now() - startTime < maxTimeout) {
+			const metrics = await PageManager.getScrollMetrics(page);
+
+			// Check if we've reached the bottom
+			if (
+				metrics.scrollTop + metrics.viewportHeight >=
+				metrics.documentHeight
+			) {
+				break;
+			}
+
+			// Check for document height stability
+			if (metrics.documentHeight === lastDocumentHeight) {
+				stabilityCounter++;
+				if (stabilityCounter >= STABILITY_THRESHOLD) {
+					// Document height hasn't changed for several checks
+					break;
+				}
+			} else {
+				stabilityCounter = 0;
+				lastDocumentHeight = metrics.documentHeight;
+			}
+
+			// Scroll and wait for content
+			await page.evaluate((step) => {
+				window.scrollBy(0, step);
+			}, scrollStep);
+
+			// Wait for lazy loading to stabilize
+			await PageManager.waitForLazyLoad(page, stabilityTimeout);
+
+			// Check for new dynamic content
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+
+		// Scroll back to top
+		await page.evaluate(() => {
+			window.scrollTo(0, 0);
+		});
+
+		// Final wait for any animations or transitions
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+
 	// captureScreenshot is a static method that captures a screenshot of the page
 	static async captureScreenshot(
 		page: Page,
 		options: ScreenshotOptions,
 	): Promise<Buffer> {
 		if (options.fullPage) {
-			// Perform smooth scroll before taking screenshot
-			await PageManager.smoothScroll(page);
-			// Wait for any lazy-loaded content
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+			// Get initial metrics to determine page size
+			const initialMetrics = await PageManager.getScrollMetrics(page);
+
+			// Adjust timeout based on page length
+			const baseTimeout = options.timeout ?? 30000;
+			const adjustedTimeout = Math.min(
+				baseTimeout *
+					Math.ceil(
+						initialMetrics.documentHeight / initialMetrics.viewportHeight,
+					),
+				120000, // Max 2 minutes
+			);
+
+			// Perform intelligent scrolling
+			await PageManager.intelligentScroll(page, {
+				maxTimeout: adjustedTimeout,
+				scrollStep: Math.floor(initialMetrics.viewportHeight * 0.8), // 80% of viewport
+				stabilityTimeout: Math.min(adjustedTimeout * 0.1, 5000), // 10% of timeout or 5s max
+			});
+
+			// Final lazy load check
+			await PageManager.waitForLazyLoad(page, 2000);
 		}
 
 		const screenshot = await page.screenshot({
