@@ -18,15 +18,15 @@ interface StickyStyle {
 }
 
 interface ScrollMetrics {
-	viewportHeight: number;
-	documentHeight: number;
-	scrollTop: number;
+	viewportHeight: number; // Height of visible area
+	documentHeight: number; // Total page height
+	scrollTop: number; // Current scroll position
 }
 
 interface LazyLoadMetrics {
-	imageCount: number;
-	iframeCount: number;
-	pendingNetworkRequests: number;
+	imageCount: number; // Number of images on page
+	iframeCount: number; // Number of iframes
+	pendingNetworkRequests: number; // Active network requests
 }
 
 declare global {
@@ -284,8 +284,7 @@ class PageManager {
 			const removeChatElements = () => {
 				for (const selector of allSelectors) {
 					const elements = document.querySelectorAll(selector);
-					// biome-ignore lint/complexity/noForEach: <explanation>
-					elements.forEach((element) => {
+					for (const element of Array.from(elements)) {
 						if (element instanceof HTMLElement) {
 							try {
 								// First try to remove
@@ -293,20 +292,20 @@ class PageManager {
 							} catch (e) {
 								// If removal fails, hide with CSS
 								element.style.cssText = `
-                                display: none !important;
-                                visibility: hidden !important;
-                                opacity: 0 !important;
-                                pointer-events: none !important;
-                                width: 0 !important;
-                                height: 0 !important;
-                                position: absolute !important;
-                                z-index: -9999 !important;
-                                clip: rect(1px, 1px, 1px, 1px) !important;
-                                overflow: hidden !important;
-                            `;
+								display: none !important;
+								visibility: hidden !important;
+								opacity: 0 !important;
+								pointer-events: none !important;
+								width: 0 !important;
+								height: 0 !important;
+								position: absolute !important;
+								z-index: -9999 !important;
+								clip: rect(1px, 1px, 1px, 1px) !important;
+								overflow: hidden !important;
+								`;
 							}
 						}
-					});
+					}
 				}
 			};
 
@@ -512,14 +511,17 @@ class PageManager {
 				continue;
 			}
 
-			// Check if content has stabilized
+			// Check if content has stabilized by comparing:
+			// 1. Number of images hasn't changed
+			// 2. Number of iframes hasn't changed
+			// 3. No pending network requests
 			const isStable =
 				currentMetrics.imageCount === previousMetrics.imageCount &&
 				currentMetrics.iframeCount === previousMetrics.iframeCount &&
 				currentMetrics.pendingNetworkRequests === 0;
 
 			if (isStable) {
-				// Wait a little longer to ensure stability
+				// Double check stability after a short wait
 				await new Promise((resolve) => setTimeout(resolve, 200));
 				const finalCheck = await PageManager.getLazyLoadMetrics(page);
 
@@ -542,9 +544,9 @@ class PageManager {
 	private static async intelligentScroll(
 		page: Page,
 		options: {
-			maxTimeout?: number;
-			scrollStep?: number;
-			stabilityTimeout?: number;
+			maxTimeout?: number; // Maximum time to spend scrolling
+			scrollStep?: number; // How many pixels to scroll each time
+			stabilityTimeout?: number; // How long to wait for content to stabilize
 		} = {},
 	): Promise<void> {
 		const {
@@ -556,9 +558,10 @@ class PageManager {
 		const startTime = Date.now();
 		let lastDocumentHeight = 0;
 		let stabilityCounter = 0;
-		const STABILITY_THRESHOLD = 3;
+		const STABILITY_THRESHOLD = 3; // Number of checks before considering page stable
 
 		while (Date.now() - startTime < maxTimeout) {
+			// Get current scroll position and page dimensions
 			const metrics = await PageManager.getScrollMetrics(page);
 
 			// Check if we've reached the bottom
@@ -573,7 +576,7 @@ class PageManager {
 			if (metrics.documentHeight === lastDocumentHeight) {
 				stabilityCounter++;
 				if (stabilityCounter >= STABILITY_THRESHOLD) {
-					// Document height hasn't changed for several checks
+					// Page height hasn't changed for 3 checks
 					break;
 				}
 			} else {
