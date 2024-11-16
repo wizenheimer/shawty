@@ -1,0 +1,5 @@
+{
+    "editor.defaultFormatter": "biomejs.biome",
+    "notebook.defaultFormatter": "ms-python.black-formatter",
+    "evenBetterToml.formatter.allowedBlankLines": 4
+}
